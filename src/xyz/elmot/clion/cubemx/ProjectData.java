@@ -7,7 +7,7 @@ import java.util.Map;
  * (c) elmot on 28.9.2017.
  */
 @SuppressWarnings({"WeakerAccess", "unused"})
-class ProjectData {
+public class ProjectData {
     private String projectName;
     private String linkerScript;
     private String mcuFamily;
@@ -17,6 +17,7 @@ class ProjectData {
     private String includes;
     private String sources;
     private String mcpu;
+    private String board;
 
     public void setProjectName(String projectName) {
         this.projectName = projectName;
@@ -42,6 +43,10 @@ class ProjectData {
             case "STM32F2":
             case "STM32L1":
                 mcpu = "cortex-m3";
+                break;
+            case "STM32F7":
+            case "STM32H7":
+                mcpu = "cortex-m7";
                 break;
             default:
                 mcpu = "cortex-m4";
@@ -84,6 +89,10 @@ class ProjectData {
         return mcpu;
     }
 
+    public String getBoard() {
+        return board;
+    }
+
     public void setDefines(String defines) {
         this.defines = defines;
     }
@@ -94,6 +103,10 @@ class ProjectData {
 
     public void setSources(String sources) {
         this.sources = sources;
+    }
+
+    public void setBoard(String board) {
+        this.board = board;
     }
 
     @Override
@@ -120,14 +133,14 @@ class ProjectData {
         map.put("includes", includes);
         map.put("sources", sources);
         map.put("mcpu", mcpu);
+        map.put("templateWarning", "THIS FILE IS AUTO GENERATED FROM THE TEMPLATE! DO NOT CHANGE!");
         return map;
     }
 
     public String shortHtml() {
-        return String.format("<html><table>" +
-                "<tr><td>Project name</td><td><b>%s</b></td></tr>" +
+        return String.format("<table>" +
                 "<tr><td>Chip</td><td><b>%s</b></td></tr>" +
                 "<tr><td>Detected CPU</td><td><b>%s</b></td></tr>" +
-                "</table></html>",projectName, mcuFamily, mcpu);
+                "</table>", mcuFamily, mcpu);
     }
 }

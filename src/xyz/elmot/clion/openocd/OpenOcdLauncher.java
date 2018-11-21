@@ -3,6 +3,7 @@ package xyz.elmot.clion.openocd;
 import com.intellij.execution.ExecutionException;
 import com.intellij.execution.configurations.CommandLineState;
 import com.intellij.execution.configurations.GeneralCommandLine;
+import com.intellij.execution.filters.Filter;
 import com.intellij.execution.process.OSProcessHandler;
 import com.intellij.execution.process.ProcessAdapter;
 import com.intellij.execution.process.ProcessEvent;
@@ -10,26 +11,27 @@ import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.ui.ExecutionConsole;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
-import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.options.ConfigurationException;
 import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.util.IconLoader;
 import com.intellij.openapi.util.Key;
-import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.util.ThrowableComputable;
 import com.intellij.xdebugger.XDebugSession;
 import com.jetbrains.cidr.cpp.execution.CMakeAppRunConfiguration;
 import com.jetbrains.cidr.cpp.execution.debugger.backend.GDBDriverConfiguration;
+import com.jetbrains.cidr.cpp.toolchains.CPPDebugger;
 import com.jetbrains.cidr.cpp.toolchains.CPPToolchains;
 import com.jetbrains.cidr.execution.debugger.CidrDebugProcess;
+import com.jetbrains.cidr.execution.debugger.CidrDebuggerPathManager;
 import com.jetbrains.cidr.execution.debugger.backend.DebuggerCommandException;
 import com.jetbrains.cidr.execution.debugger.backend.DebuggerDriver;
 import com.jetbrains.cidr.execution.debugger.remote.CidrRemoteDebugParameters;
 import com.jetbrains.cidr.execution.debugger.remote.CidrRemoteGDBDebugProcess;
 import com.jetbrains.cidr.execution.testing.CidrLauncher;
 import org.jetbrains.annotations.NotNull;
+import xyz.elmot.clion.openocd.OpenOcdComponent.STATUS;
+import xyz.elmot.clion.openocd.OpenOcdConfiguration.DownloadType;
 
 import java.io.File;
 import java.util.List;
@@ -54,8 +56,9 @@ class OpenOcdLauncher extends CidrLauncher {
         File runFile = findRunFile(commandLineState);
         findOpenOcdAction(commandLineState.getEnvironment().getProject()).stopOpenOcd();
         try {
-            GeneralCommandLine commandLine = OpenOcdComponent.createOcdCommandLine(commandLineState.getEnvironment().getProject(),
-                    runFile, "reset", true);
+            GeneralCommandLine commandLine = OpenOcdComponent
+                    .createOcdCommandLine(openOcdConfiguration,
+                            runFile, "reset", true);
             OSProcessHandler osProcessHandler = new OSProcessHandler(commandLine);
             osProcessHandler.addProcessListener(new ProcessAdapter() {
                 @Override
@@ -71,26 +74,42 @@ class OpenOcdLauncher extends CidrLauncher {
             });
             return osProcessHandler;
         } catch (ConfigurationException e) {
-            Messages.showErrorDialog(getProject(), e.getLocalizedMessage(), e.getTitle());
+            Informational.showPluginError(getProject(), e);
             throw new ExecutionException(e);
         }
     }
 
     @NotNull
     @Override
-    protected CidrDebugProcess createDebugProcess(@NotNull CommandLineState commandLineState, @NotNull XDebugSession xDebugSession) throws ExecutionException {
+    protected CidrDebugProcess createDebugProcess(@NotNull CommandLineState commandLineState,
+                                                  @NotNull XDebugSession xDebugSession) throws ExecutionException {
         Project project = commandLineState.getEnvironment().getProject();
         OpenOcdSettingsState ocdSettings = project.getComponent(OpenOcdSettingsState.class);
         CidrRemoteDebugParameters remoteDebugParameters = new CidrRemoteDebugParameters();
 
         remoteDebugParameters.setSymbolFile(findRunFile(commandLineState).getAbsolutePath());
-        remoteDebugParameters.setRemoteCommand("tcp:localhost:" + ocdSettings.gdbPort);
+        remoteDebugParameters.setRemoteCommand("tcp:localhost:" + openOcdConfiguration.getGdbPort());
 
-        CPPToolchains.Toolchain defaultToolchain = CPPToolchains.getInstance().getDefaultToolchain();
-        GDBDriverConfiguration gdbDriverConfiguration = new GDBDriverConfiguration(getProject(), defaultToolchain,
-                findGdb(ocdSettings));
+        CPPToolchains.Toolchain toolchain = CPPToolchains.getInstance().getDefaultToolchain();
+        if (toolchain == null) {
+            throw new ExecutionException("Project toolchain is not defined. Please define it in the project settings.");
+        }
+        String gdbPath;
+        if (ocdSettings.shippedGdb) {
+            toolchain = toolchain.copy();
+            File gdbFile = CidrDebuggerPathManager.getBundledGDBBinary();
+            gdbPath = gdbFile.getAbsolutePath();
+            CPPDebugger cppDebugger = CPPDebugger.create(CPPDebugger.Kind.CUSTOM_GDB, gdbPath);
+            toolchain.setDebugger(cppDebugger);
+        }
+        GDBDriverConfiguration gdbDriverConfiguration = new GDBDriverConfiguration(getProject(), toolchain);
         xDebugSession.stop();
-        CidrRemoteGDBDebugProcess debugProcess = new CidrRemoteGDBDebugProcess(gdbDriverConfiguration, remoteDebugParameters, xDebugSession, commandLineState.getConsoleBuilder());
+        CidrRemoteGDBDebugProcess debugProcess =
+                new CidrRemoteGDBDebugProcess(gdbDriverConfiguration,
+                        remoteDebugParameters,
+                        xDebugSession,
+                        commandLineState.getConsoleBuilder(),
+                        project1 -> new Filter[0]);
         debugProcess.getProcessHandler().addProcessListener(new ProcessAdapter() {
             @Override
             public void processWillTerminate(@NotNull ProcessEvent event, boolean willBeDestroyed) {
@@ -101,7 +120,7 @@ class OpenOcdLauncher extends CidrLauncher {
         debugProcess.getProcessHandler().putUserData(RESTART_KEY,
                 new AnAction("Reset", "MCU Reset", IconLoader.findIcon("reset.png", OpenOcdLauncher.class)) {
                     @Override
-                    public void actionPerformed(AnActionEvent e) {
+                    public void actionPerformed(@NotNull AnActionEvent e) {
                         XDebugSession session = debugProcess.getSession();
                         session.pause();
                         debugProcess.postCommand(drv -> {
@@ -125,18 +144,10 @@ class OpenOcdLauncher extends CidrLauncher {
     }
 
     @NotNull
-    private File findGdb(OpenOcdSettingsState ocdSettings) {
-        if (ocdSettings.shippedGdb) {
-            String binaryName = SystemInfo.isWindows ? "gdb.exe" : "gdb";
-            return new File(PathManager.getBinPath(), "gdb" + File.separator + "bin" + File.separator + binaryName);
-        }
-        return new File(ocdSettings.gdbLocation);
-    }
-
-    @NotNull
     private File findRunFile(CommandLineState commandLineState) throws ExecutionException {
         String targetProfileName = commandLineState.getExecutionTarget().getDisplayName();
-        CMakeAppRunConfiguration.BuildAndRunConfigurations runConfigurations = openOcdConfiguration.getBuildAndRunConfigurations(targetProfileName);
+        CMakeAppRunConfiguration.BuildAndRunConfigurations runConfigurations = openOcdConfiguration
+                .getBuildAndRunConfigurations(targetProfileName);
         if (runConfigurations == null) {
             throw new ExecutionException("Target is not defined");
         }
@@ -153,39 +164,58 @@ class OpenOcdLauncher extends CidrLauncher {
 
     @NotNull
     @Override
-    public CidrDebugProcess startDebugProcess(@NotNull CommandLineState commandLineState, @NotNull XDebugSession xDebugSession) throws ExecutionException {
-        Project project = commandLineState.getEnvironment().getProject();
+    public CidrDebugProcess startDebugProcess(@NotNull CommandLineState commandLineState,
+                                              @NotNull XDebugSession xDebugSession) throws ExecutionException {
 
-        File runFile = findRunFile(commandLineState);
+        File runFile = null;
+        if (openOcdConfiguration.getDownloadType() != DownloadType.NONE) {
+            runFile = findRunFile(commandLineState);
+            if (openOcdConfiguration.getDownloadType() == DownloadType.UPDATED_ONLY &&
+                    OpenOcdComponent.isLatestUploaded(runFile)) {
+                runFile = null;
+            }
+        }
 
         try {
             xDebugSession.stop();
             OpenOcdComponent openOcdComponent = findOpenOcdAction(commandLineState.getEnvironment().getProject());
             openOcdComponent.stopOpenOcd();
-            Future<OpenOcdComponent.STATUS> downloadResult = openOcdComponent.startOpenOcd(project, runFile, "reset init");
+            Future<STATUS> downloadResult = openOcdComponent.startOpenOcd(openOcdConfiguration, runFile, openOcdConfiguration.getResetType().getCommand());
 
-            ThrowableComputable<OpenOcdComponent.STATUS, ExecutionException> process = () -> {
+            ProgressManager progressManager = ProgressManager.getInstance();
+            ThrowableComputable<STATUS, ExecutionException> process = () -> {
                 try {
-                    ProgressManager.getInstance().getProgressIndicator().setIndeterminate(true);
-                    return downloadResult.get(10, TimeUnit.MINUTES);
-                } catch (InterruptedException | TimeoutException | java.util.concurrent.ExecutionException e) {
+                    progressManager.getProgressIndicator().setIndeterminate(true);
+                    while (true) {
+                        try {
+                            return downloadResult.get(500, TimeUnit.MILLISECONDS);
+                        } catch (TimeoutException ignored) {
+                            ProgressManager.checkCanceled();
+                        }
+                    }
+                } catch (InterruptedException | java.util.concurrent.ExecutionException e) {
                     throw new ExecutionException(e);
                 }
             };
-            if (ProgressManager.getInstance().runProcessWithProgressSynchronously(
-                    process, "Firmware Download", true, getProject()) != OpenOcdComponent.STATUS.FLASH_SUCCESS) {
+            String progressTitle = runFile == null ? "Start OpenOCD" : "Firmware Download";
+            STATUS downloadStatus = progressManager.runProcessWithProgressSynchronously(
+                    process, progressTitle, true, getProject());
+            if (downloadStatus == STATUS.FLASH_ERROR) {
                 downloadResult.cancel(true);
                 throw new ExecutionException("OpenOCD cancelled");
             }
             return super.startDebugProcess(commandLineState, xDebugSession);
         } catch (ConfigurationException e) {
-            Messages.showErrorDialog(getProject(), e.getLocalizedMessage(), e.getTitle());
+            Informational.showPluginError(getProject(), e);
             throw new ExecutionException(e);
         }
     }
 
     @Override
-    protected void collectAdditionalActions(@NotNull CommandLineState commandLineState, @NotNull ProcessHandler processHandler, @NotNull ExecutionConsole executionConsole, @NotNull List<AnAction> list) throws ExecutionException {
+    protected void collectAdditionalActions(@NotNull CommandLineState commandLineState,
+                                            @NotNull ProcessHandler processHandler,
+                                            @NotNull ExecutionConsole executionConsole, @NotNull List<AnAction> list)
+            throws ExecutionException {
         super.collectAdditionalActions(commandLineState, processHandler, executionConsole, list);
         AnAction restart = processHandler.getUserData(RESTART_KEY);
         if (restart != null) {

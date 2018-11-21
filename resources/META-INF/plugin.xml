@@ -1,11 +1,12 @@
 <idea-plugin>
     <id>xyz.elmot.clion.armsupport.prj</id>
     <name>OpenOCD + STM32CubeMX support for ARM embedded development</name>
-    <version>0.8.alpha</version>
+    <version>1.2.alpha1</version>
     <vendor email="me@elmot.xyz" url="http://elmot.xyz">Elmot</vendor>
 
     <description><![CDATA[
 ARM MCU development plugin
+
 <br>
 <ul>
     <li>Convert a project made in <i>STM32CubeMX</i> into a <i>CLion</i> project</li>
@@ -30,21 +31,22 @@ The plugin is free, but if you like it, you may support my work with a PayPal do
 <br>
 
 <a href="https://paypal.me/elmot/10eur">10 EUR</a> |
-<a href="https://paypal.me/elmot/5eur">5 EUR</a> |
+<a href="https://paypal.me/elmot/20eur">20 EUR</a> |
 <a href="https://paypal.me/elmot">Other amount</a>
 ]]></description>
 
     <change-notes><![CDATA[
         <ul>
-        <li><i>Reset MCU</i> button in debugger</li>
-        <li>CMakeLists.txt is now customizable via template</li>
-        <li>Bug fixes</li>
+        <li>CLion 2018.3 EAP support</li>
+        <li>Memory statistics output</li>
+        <li>C++ support in CMakeLists template</li>
+        <li>Small fixes and improvements</li>
         </ul>
     ]]>
     </change-notes>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/build_number_ranges.html for description -->
-    <idea-version since-build="173.3531" until-build="173.*"/>
+    <idea-version since-build="182.9999" until-build="183.*"/>
 
     <!-- please see http://www.jetbrains.org/intellij/sdk/docs/basics/getting_started/plugin_compatibility.html
          on how to target different products -->
@@ -52,19 +54,19 @@ The plugin is free, but if you like it, you may support my work with a PayPal do
     <extensions defaultExtensionNs="com.intellij">
         <configurationType implementation="xyz.elmot.clion.openocd.OpenOcdConfigurationType" id="elmot.embedded.openocd.conf.type"/>
         <projectConfigurable order="last" id="elmot.embedded.config" instance="xyz.elmot.clion.openocd.OpenOcdSettings"
-                             displayName="OpenOCD Support" groupId="build.tools"/>
+                             displayName="OpenOCD Support" groupId="build"/>
     </extensions>
     <actions>
         <group id="elmot.embedded.grp" icon="/xyz/elmot/clion/openocd/ocd.png" description="ARM MCU Firmware"
                text="ARM MCU">
 
             <action id="elmot.embedded.stm32cubemx.import" class="xyz.elmot.clion.cubemx.ConvertProject"/>
-            <action id="elmot.embedded.openocd.run" class="xyz.elmot.clion.openocd.OpenOcdRun" text="Run OpenOCD"/>
             <add-to-group group-id="ToolsMenu" anchor="after" relative-to-action="CMake.ToolsMenu"/>
         </group>
     </actions>
     <project-components>
         <component>
+            <loadForDefaultProject>true</loadForDefaultProject>
             <implementation-class>xyz.elmot.clion.openocd.OpenOcdSettingsState</implementation-class>
         </component>
         <component>
